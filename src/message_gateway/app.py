@@ -3,11 +3,18 @@
     uvicorn --factory message_gateway.app:create_app --port 8080
     python -m message_gateway.app            # serve on :8080
     python -m message_gateway.app drain      # process the inbox once
+    python -m message_gateway.app cron       # one project-reminder tick
+    python -m message_gateway.app cron-fast  # one independent-reminder tick
 
 Endpoints:
     GET  /health          liveness
     POST /webhook         Pub/Sub push target; drains the inbox
     POST /refresh-watch   re-registers the Gmail watch (call daily)
+    POST /cron            project-task reminder engine (call hourly)
+    POST /cron-fast       independent-task reminder engine (call every 30 min)
+
+Both reminder engines are no-ops outside business hours, so calling them
+more often than needed is safe.
 
 The endpoints do no in-app authentication. The original deployment relied on
 the hosting platform for that (private service, push and scheduler identities
@@ -29,6 +36,7 @@ from .classifier import Classifier
 from .config import Settings
 from .models import IncomingMessage
 from .records import is_msg_id_processed, load_contacts, log_activity
+from .reminders import run_independent_periodic_jobs, run_periodic_jobs
 from .router import SupportsClassify, process_message
 from .store import Store
 from .text import subject_line
@@ -174,6 +182,26 @@ def create_app(
         log.info("watch refreshed: %s", info)
         return {"ok": True, **info}
 
+    def _tick(name: str, engine: Callable[..., dict[str, Any]]) -> dict[str, Any]:
+        try:
+            runtime = runtime_factory()
+            summary = engine(runtime.channel, runtime.store)
+        except Exception as e:
+            log.exception("%s tick failed", name)
+            raise HTTPException(
+                status_code=500, detail=f"{type(e).__name__}: {str(e)[:200]}"
+            ) from e
+        log.info("%s tick: %s", name, summary)
+        return {"ok": True, **summary}
+
+    @app.post("/cron")
+    async def cron() -> dict[str, Any]:
+        return _tick("cron", run_periodic_jobs)
+
+    @app.post("/cron-fast")
+    async def cron_fast() -> dict[str, Any]:
+        return _tick("cron-fast", run_independent_periodic_jobs)
+
     return app
 
 
@@ -186,6 +214,14 @@ def main(argv: list[str] | None = None) -> None:
         load_dotenv(override=True)
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         drain_inbox(build_runtime())
+    elif cmd in {"cron", "cron-fast"}:
+        from dotenv import load_dotenv
+
+        load_dotenv(override=True)
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        runtime = build_runtime()
+        engine = run_periodic_jobs if cmd == "cron" else run_independent_periodic_jobs
+        print(engine(runtime.channel, runtime.store))
     else:
         import uvicorn
 

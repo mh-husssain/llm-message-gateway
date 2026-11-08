@@ -5,14 +5,24 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from fakes import ADMIN, ALICE, StubClassifier, classification, intent, seeded_store
+from fakes import (
+    ADMIN,
+    ALICE,
+    FakeChannel,
+    StubClassifier,
+    classification,
+    intent,
+    seed_task,
+    seeded_store,
+)
 from gmail_fake import FakeGmail, gmail_message
 from message_gateway.app import GENERIC_ERROR_REPLY, Runtime, create_app, drain_inbox
 from message_gateway.channels.gmail import GmailChannel
 from message_gateway.channels.gmail_watch import label_ids, register_watch, stop_watch
 from message_gateway.config import ConfigError, Settings
 from message_gateway.gate import LOCKED_UNKNOWN_REPLY
-from message_gateway.records import log_activity
+from message_gateway.models import IndependentTask
+from message_gateway.records import append_independent_task, log_activity
 
 
 def runtime(fake: FakeGmail, store=None, classifier=None) -> Runtime:
@@ -128,11 +138,10 @@ def test_refresh_watch_endpoint():
     assert resp.json()["detail"] == "RuntimeError: no topic"
 
 
-def test_no_cron_endpoints_in_the_showcase():
+def test_all_endpoints_are_registered():
     app = create_app(runtime_factory=lambda: None, watch_refresher=lambda: {}, load_env=False)
     paths = {r.path for r in app.routes}
-    assert {"/health", "/webhook", "/refresh-watch"} <= paths
-    assert "/cron" not in paths and "/cron-fast" not in paths
+    assert {"/health", "/webhook", "/refresh-watch", "/cron", "/cron-fast"} <= paths
 
 
 def test_watch_registration_without_network():
@@ -174,3 +183,60 @@ def test_watch_registration_without_network():
         register_watch(
             Settings(gmail_user="g@example.com", google_service_account="x"), service=svc
         )
+
+
+def test_cron_endpoints_run_the_engines(frozen):
+    store = seeded_store()
+    seed_task(store, task_id="T-0001", due_date="20/05/2026")
+    append_independent_task(
+        store,
+        IndependentTask(
+            task_id="I-0001",
+            creator_id=ADMIN,
+            creator_name="Admin One",
+            assignee_id=ALICE,
+            assignee_name="Alice",
+            description="d",
+            status="assigned",
+            deadline="19/05/2026 09:00:00",
+            pre_deadline_reminder_minutes="",
+            last_reminder_sent_at="",
+            escalation_count=0,
+            escalated_at="",
+            completed_at="",
+            original_request_msg_id="",
+            completion_msg_id="",
+            notes="",
+        ),
+    )
+    rt = Runtime(channel=FakeChannel(), store=store, classifier=None)
+    client = TestClient(
+        create_app(runtime_factory=lambda: rt, watch_refresher=dict, load_env=False)
+    )
+
+    frozen.set(2026, 5, 19, 3)
+    assert client.post("/cron").json() == {"ok": True, "skipped": "outside_business_hours"}
+    assert client.post("/cron-fast").json() == {"ok": True, "skipped": "outside_business_hours"}
+
+    frozen.set(2026, 5, 19, 10)
+    assert client.post("/cron").json() == {
+        "ok": True,
+        "fired": 1,
+        "details": [{"rule": "A", "task_id": "T-0001"}],
+    }
+    assert client.post("/cron-fast").json() == {
+        "ok": True,
+        "fired": 1,
+        "details": [{"rule": "I2", "task_id": "I-0001"}],
+    }
+
+
+def test_cron_failure_returns_500():
+    def broken():
+        raise RuntimeError("no credentials")
+
+    client = TestClient(create_app(runtime_factory=broken, watch_refresher=dict, load_env=False))
+    for path in ("/cron", "/cron-fast"):
+        resp = client.post(path)
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "RuntimeError: no credentials"

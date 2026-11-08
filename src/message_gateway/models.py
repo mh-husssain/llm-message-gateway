@@ -156,6 +156,18 @@ class IndependentTask:
     def is_open(self) -> bool:
         return self.status not in TERMINAL_STATUSES
 
+    @property
+    def pre_deadline_minutes_int(self) -> int | None:
+        """The pre-deadline reminder interval, or None if empty, non-numeric or <= 0."""
+        v = (self.pre_deadline_reminder_minutes or "").strip()
+        if not v:
+            return None
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+
 
 @dataclass
 class Conversation:

@@ -20,9 +20,9 @@ from .models import (
 from .records import update_task_fields
 from .store import Store
 
-# Notes markers written by the reminder engine (not part of this repository)
-# to stop a rule firing twice in one cycle. Handlers that restart a task's
-# schedule clear them via `clear_late_completion_state`.
+# Notes markers written by the reminder engine (`message_gateway.reminders`)
+# so a one-shot owner notice fires once per cycle. Handlers that restart a
+# task's schedule clear them via `clear_late_completion_state`.
 OWNER_NO_UPDATE_MARKER = "OWNER_NO_UPDATE_NOTICE_SENT"
 LATE_OWNER_NOTICE_MARKER = "LATE_OWNER_NOTICE_SENT"
 

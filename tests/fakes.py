@@ -32,6 +32,7 @@ class Outbound:
     to: str
     subject: str
     body: str
+    blocks: list[tuple[str, str | None]] | None = None
 
 
 @dataclass
@@ -63,7 +64,7 @@ class FakeChannel:
         self.replies.append(SentReply(msg.msg_id, body, blocks))
 
     def send_new(self, contact: Contact, subject: str, body: str, *, blocks=None) -> None:
-        self.outbox.append(Outbound(contact.identity, subject, body))
+        self.outbox.append(Outbound(contact.identity, subject, body, blocks))
 
     def mark_processed(self, msg: IncomingMessage) -> None:
         self.processed.append(msg.msg_id)

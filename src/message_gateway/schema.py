@@ -205,7 +205,8 @@ INDEPENDENT_TASKS = TabSchema(
     name="Independent_Tasks",
     description=(
         "Project-less action items: one assignee, a hard deadline with minute "
-        "precision, and an instant notification on creation."
+        "precision, an instant notification on creation, and reminders from the "
+        "/cron-fast engine (two post-deadline chasers, then one creator notice)."
     ),
     columns=(
         Column("A", "task_id", "I-XXXX (zero-padded)."),
